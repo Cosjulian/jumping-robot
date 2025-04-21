@@ -26,8 +26,6 @@ void setup() {
   digitalWrite(output26, LOW);
 
   lidarSerial.begin(115200, SERIAL_8N1, RXD2, TXD2); // Starts the lidar ports 
-  myservo.setPeriodHertz(50);    // standard 50 hz servo
-	myservo.attach(servoPin, 500, 2400); 
 
   Serial.print("Connecting to ");
   Serial.println(ssid);
@@ -73,7 +71,7 @@ void loop(){
               Serial.println("GPIO 13 ON");
               digitalWrite(output26, HIGH);
               output26State = "on";
-              delay(sqrt(0.0016 * distance / 100) * 10.05 * 1000);
+              delay(pow(distance, 1.2) * 4.98 * 1000);
               digitalWrite(output26, LOW);
               Serial.println("GPIO 13 OFF");
 
