@@ -1,98 +1,110 @@
-#include <Arduino.h>
 #include <WiFi.h>
+#include <HardwareSerial.h> 
+HardwareSerial lidarSerial(2);
+#define RXD2 27 // Lidar ports
+#define TXD2 26 // Lidar ports
 
-const char* ssid = "dingle_berry";
+uint16_t last_distance = 0;
 
-// Motor Pin Pins
-const int output26 = 26;
+const char* ssid = "Jumping-Robot";
 
-String output26State = "off";
+WiFiServer server(80); // 80 is the port
 
-WiFiServer server(80);
+String header; // HTTP Header
+String output26State = "off"; // Maintains state of DC motors (i.e. on or off)
 
-// Distance from LIDAR
-int last_distance = 0;
+const int output26 = 13;  // GPIO pin for motors
+
+// For website
+unsigned long currentTime = millis();
+unsigned long previousTime = 0; 
+const long timeoutTime = 2000;
 
 void setup() {
   Serial.begin(115200);
-
-
   pinMode(output26, OUTPUT);
   digitalWrite(output26, LOW);
 
-  Serial.println("Connecting to WiFi...");
+  lidarSerial.begin(115200, SERIAL_8N1, RXD2, TXD2); // Starts the lidar ports 
+  myservo.setPeriodHertz(50);    // standard 50 hz servo
+	myservo.attach(servoPin, 500, 2400); 
+
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
   WiFi.softAP(ssid);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.print(".");
-  }
+
   Serial.println("");
   Serial.println("WiFi connected.");
-  Serial.print("IP address: ");
+  Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
-
   server.begin();
 }
 
-void loop() {
-  // Read LIDAR distance if available
-  if (Serial.available()) {
-    String lidar_input = Serial.readStringUntil('\n');
-    lidar_input.trim();
-    if (lidar_input.length() > 0) {
-      last_distance = lidar_input.toInt();
-      Serial.print("Updated distance: ");
-      Serial.println(last_distance);
+uint16_t distance = 0;
+
+void loop(){
+  WiFiClient client = server.available();   // Listen for incoming clients
+  uint8_t buf[9] = {0};
+
+  lidarSerial.readBytes(buf, 9);
+    if( buf[0] == 0x59 && buf[1] == 0x59)
+    {
+      distance = buf[2] + buf[3] * 256;
     }
-  }
 
-  WiFiClient client = server.available(); // listen for incoming clients
-  if (client) {
-    Serial.println("New Client.");
-    String currentLine = "";
-    String header = "";
-
-    while (client.connected()) {
-      if (client.available()) {
-        char c = client.read();
+  if (client) {                           
+    currentTime = millis();
+    previousTime = currentTime;
+    Serial.println("New Client.");         
+    String currentLine = "";               
+    while (client.connected()) {  
+      currentTime = millis();
+      if (client.available()) {             
+        char c = client.read();             
         header += c;
-        if (c == '\n') {
+        if (c == '\n') {                   
           if (currentLine.length() == 0) {
-            // Handle request
-            if (header.indexOf("GET /26/on") >= 0) {
-              Serial.println("GPIO 26 on");
-              output26State = "on";
-              digitalWrite(output26, HIGH);
-            } else if (header.indexOf("GET /26/off") >= 0) {
-              Serial.println("GPIO 26 off");
-              output26State = "off";
-              digitalWrite(output26, LOW);
-            } else if (header.indexOf("GET /get_distance") >= 0) {
-              Serial.println("Distance requested");
-              client.println("HTTP/1.1 200 OK");
-              client.println("Content-Type: application/json");
-              client.println("Connection: close");
-              client.println();
-              client.print("{\"distance\": ");
-              client.print(last_distance);
-              client.println("}");
-              break;
-            }
-
-            // HTML response for root or other endpoints
             client.println("HTTP/1.1 200 OK");
             client.println("Content-type:text/html");
             client.println("Connection: close");
             client.println();
-            client.println("<!DOCTYPE html><html>");
-            client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-            client.println("<style>body { font-family: Arial; } button { padding: 10px; margin: 5px; }</style></head>");
-            client.println("<body><h1>ESP32 Web Server</h1>");
-            client.println("<p>GPIO 26 - State: " + output26State + "</p>");
-            client.println("<p><a href=\"/26/on\"><button>ON</button></a>");
-            client.println("<a href=\"/26/off\"><button>OFF</button></a></p>");
-            client.println("<p>Latest LIDAR Distance: " + String(last_distance) + " cm</p>");
-            client.println("</body></html>");
+            
+            if (header.indexOf("GET /26/on") >= 0) {
+              Serial.println("GPIO 13 ON");
+              digitalWrite(output26, HIGH);
+              output26State = "on";
+              delay(sqrt(0.0016 * distance / 100) * 10.05 * 1000);
+              digitalWrite(output26, LOW);
+              Serial.println("GPIO 13 OFF");
+
+            }  else if (header.indexOf("GET /get_distance") >= 0) {
+              Serial.println("Distance requested");
+              client.print("{\"distance\": ");
+              client.print(distance);
+              client.println("}");
+              break;
+            }
+
+            client.print("<div class=\"container\" style=\"max-width: 500px; margin-top: 50px; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);\">");
+            client.print("<h1 style=\"color: #007bff;\">Jumping Robot Interface</h1>");
+
+            client.print("<p>Lidar Detected Distance: <span id=\"distanceValue\">--</span> cm <button onclick=\"updateDistance()\" class=\"btn btn-sm btn-outline-primary\">Get Distance</button></p>");
+
+            client.print("<a href=\"/26/on\"><button type=\"button\" class=\"btn btn-primary\" style=\"width: 100%; font-size: 1.2rem;\">Compress</button></a>");
+
+            client.print("<script>");
+            client.print("function updateDistance() {");
+            client.print("fetch('/get_distance').then(res => res.json()).then(data => {");
+            client.print("document.getElementById('distanceValue').textContent = data.distance;");
+            client.print("}).catch(err => {");
+            client.print("console.log(err); ");
+            client.print("document.getElementById('distanceValue').textContent = 'Error';");
+            client.print("});");
+            client.print("}");
+            client.print("</script>");
+            client.println("</div></body></html>");
+
+            client.println();
             break;
           } else {
             currentLine = "";
@@ -101,9 +113,12 @@ void loop() {
           currentLine += c;
         }
       }
+      last_distance = distance;
     }
-    delay(1);
+    header = "";
     client.stop();
-    Serial.println("Client Disconnected.");
+    Serial.println("Client disconnected.");
+    Serial.println("");
   }
 }
+
